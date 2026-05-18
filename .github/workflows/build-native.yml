@@ -1,0 +1,72 @@
+name: build-native
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'external/GameNetworkingSockets/**'
+      - 'build/build-native-*.sh'
+      - 'build/build-native-*.ps1'
+      - '.github/workflows/build-native.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.rid }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            runner: windows-2022
+            script: pwsh build/build-native-win.ps1
+          - rid: linux-x64
+            runner: ubuntu-22.04
+            script: bash build/build-native-unix.sh linux-x64
+          - rid: osx-arm64
+            runner: macos-14
+            script: bash build/build-native-unix.sh osx-arm64
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up CMake
+        uses: lukka/get-cmake@latest
+
+      - name: Set up MSVC (Windows)
+        if: matrix.rid == 'win-x64'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install Linux dependencies
+        if: matrix.rid == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev libprotobuf-dev protobuf-compiler
+
+      - name: Install macOS dependencies
+        if: matrix.rid == 'osx-arm64'
+        run: brew install openssl protobuf
+
+      - name: Build native library (${{ matrix.rid }})
+        shell: bash
+        run: ${{ matrix.script }}
+
+      - name: Upload GameNetworkingSockets shared library
+        uses: actions/upload-artifact@v4
+        with:
+          name: gns-native-${{ matrix.rid }}
+          path: artifacts/native/${{ matrix.rid }}/
+          if-no-files-found: error
+          retention-days: 14

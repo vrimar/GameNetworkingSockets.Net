@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>GameNetworkingSockets.Net.TestApp</RootNamespace>
+    <AssemblyName>GameNetworkingSockets.Net.TestApp</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <NativeArtifactsDir Condition="'$(NativeArtifactsDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\native\</NativeArtifactsDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\GameNetworkingSockets.Net\GameNetworkingSockets.Net.csproj" />
+  </ItemGroup>
+
+  <!--
+    For a ProjectReference build, .NET does not automatically resolve the
+    runtimes/<rid>/native/* assets from the referenced library project the
+    way it would for a PackageReference. Copy the native artifacts for the
+    current host explicitly so the test exe can dlopen them at runtime.
+    The certtool ships under tools/<rid>/ in the NuGet package (not next to
+    the native lib) but for the local dev workflow we stage it alongside.
+  -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) and Exists('$(NativeArtifactsDir)win-x64\GameNetworkingSockets.dll')">
+    <None Include="$(NativeArtifactsDir)win-x64\*.dll"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(NativeArtifactsDir)win-x64\steamnetworkingsockets_certtool.exe"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux')) and Exists('$(NativeArtifactsDir)linux-x64/libGameNetworkingSockets.so')">
+    <None Include="$(NativeArtifactsDir)linux-x64/*.so"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(NativeArtifactsDir)linux-x64/steamnetworkingsockets_certtool"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) and Exists('$(NativeArtifactsDir)osx-x64/libGameNetworkingSockets.dylib')">
+    <None Include="$(NativeArtifactsDir)osx-x64/*.dylib"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(NativeArtifactsDir)osx-x64/steamnetworkingsockets_certtool"
+          CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+</Project>

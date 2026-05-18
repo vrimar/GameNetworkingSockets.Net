@@ -1,0 +1,4 @@
+[submodule "external/GameNetworkingSockets"]
+	path = external/GameNetworkingSockets
+	url = https://github.com/vrimar/GameNetworkingSockets.git
+	branch = feature/byo-cert-key

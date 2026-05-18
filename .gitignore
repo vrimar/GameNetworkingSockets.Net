@@ -1,0 +1,31 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+.vscode/
+.idea/
+*.swp
+*.DS_Store
+Thumbs.db
+
+# Packages and outputs
+artifacts/
+out/
+publish/
+*.nupkg
+*.snupkg
+local-feed/
+
+# Native build outputs
+.build/
+build/build-*/
+build/vcpkg_installed/
+build/vcpkg-local/
+build/*.log
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
