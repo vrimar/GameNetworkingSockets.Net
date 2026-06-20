@@ -56,7 +56,11 @@ cryptographic primitives. Which library is linked depends on the native
 build flags passed via `build/build-native-*.{ps1,sh}`. Refer to the
 respective project licenses (OpenSSL: Apache-2.0; libsodium: ISC).
 
+Unix package binaries statically include the pinned OpenSSL release documented
+in `build/build-native-unix.sh`.
+
 ## Protocol Buffers (protobuf)
 
 GameNetworkingSockets uses Google's Protocol Buffers for wire serialization.
-Protobuf is licensed under BSD 3-Clause.
+Unix package binaries statically include protobuf 21.12. Protobuf is licensed
+under BSD 3-Clause.

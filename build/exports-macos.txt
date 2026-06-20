@@ -1,0 +1,3 @@
+_GameNetworkingSockets_*
+_SteamAPI_*
+_SteamNetworking*

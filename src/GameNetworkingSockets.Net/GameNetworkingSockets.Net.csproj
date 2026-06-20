@@ -24,9 +24,9 @@
   </ItemGroup>
 
   <!--
-    GameNetworkingSockets.dll dynamically links to OpenSSL, protobuf, and
-    abseil; the build script stages all of them next to the main DLL. Glob so
-    the package transparently picks up whatever the build emits.
+    The Windows build dynamically links to OpenSSL, protobuf, and abseil, and
+    stages those DLLs next to GameNetworkingSockets.dll. Unix builds statically
+    link OpenSSL and protobuf and therefore stage only the GNS library.
   -->
   <ItemGroup>
     <None Include="$(NativeArtifactsDir)win-x64\*.dll"     Pack="true" PackagePath="runtimes\win-x64\native\"   Condition="Exists('$(NativeArtifactsDir)win-x64\GameNetworkingSockets.dll')" />

@@ -5,8 +5,12 @@
 # Where <rid> is one of: linux-x64, osx-x64, osx-arm64
 #
 # Required dependencies (install before running):
-#   Linux (Debian/Ubuntu): sudo apt install libssl-dev libprotobuf-dev protobuf-compiler
-#   macOS (Homebrew):      brew install openssl protobuf
+#   Linux (Debian/Ubuntu): sudo apt install build-essential cmake curl perl
+#   macOS (Homebrew):      brew install cmake
+#
+# Protobuf and OpenSSL are downloaded at pinned versions and built as PIC
+# static libraries. This keeps the packaged GameNetworkingSockets library
+# independent of host package-manager ABIs.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
@@ -18,26 +22,34 @@ fi
 RID="$1"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 GNS="$REPO/external/GameNetworkingSockets"
+PROTOBUF_VERSION="21.12"
+PROTOBUF_ARCHIVE="protobuf-all-$PROTOBUF_VERSION.tar.gz"
+PROTOBUF_URL="https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOBUF_VERSION/$PROTOBUF_ARCHIVE"
+PROTOBUF_SHA256="2c6a36c7b5a55accae063667ef3c55f2642e67476d96d355ff0acb13dbb47f09"
+OPENSSL_VERSION="3.5.7"
+OPENSSL_ARCHIVE="openssl-$OPENSSL_VERSION.tar.gz"
+OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/$OPENSSL_ARCHIVE"
+OPENSSL_SHA256="a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8"
+OPENSSL_BUILD_REVISION="2"
 
 case "$RID" in
     linux-x64)
         LIB_EXT="so"
+        OPENSSL_TARGET="linux-x86_64"
+        PLATFORM_SHARED_LINKER_FLAGS="-Wl,--exclude-libs,ALL"
         EXTRA_CMAKE_ARGS=()
         ;;
     osx-x64|osx-arm64)
         LIB_EXT="dylib"
+        export MACOSX_DEPLOYMENT_TARGET=11.0
+        PLATFORM_SHARED_LINKER_FLAGS="-Wl,-exported_symbols_list,$REPO/build/exports-macos.txt"
         EXTRA_CMAKE_ARGS=(-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
         if [ "$RID" = "osx-x64" ]; then
+            OPENSSL_TARGET="darwin64-x86_64-cc"
             EXTRA_CMAKE_ARGS+=(-DCMAKE_OSX_ARCHITECTURES=x86_64)
         else
+            OPENSSL_TARGET="darwin64-arm64-cc"
             EXTRA_CMAKE_ARGS+=(-DCMAKE_OSX_ARCHITECTURES=arm64)
-        fi
-        # Help CMake locate Homebrew's OpenSSL.
-        if command -v brew >/dev/null 2>&1; then
-            OPENSSL_PREFIX="$(brew --prefix openssl 2>/dev/null || true)"
-            if [ -n "$OPENSSL_PREFIX" ]; then
-                EXTRA_CMAKE_ARGS+=("-DOPENSSL_ROOT_DIR=$OPENSSL_PREFIX")
-            fi
         fi
         ;;
     *)
@@ -51,39 +63,142 @@ if [ ! -f "$GNS/include/steam/steamnetworkingsockets.h" ]; then
     exit 1
 fi
 
-# Upstream bug: when STEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE is enabled,
-# IThinker declares a class-local operator delete via the
-# STEAMNETWORKINGSOCKETS_DECLARE_CLASS_OPERATOR_NEW macro. Several classes
-# privately inherit IThinker, which makes the inherited operators
-# inaccessible to *further* derived classes — and their virtual destructors
-# are then implicitly deleted. Switching the affected inheritance from
-# private to public preserves runtime semantics (the operators are public
-# in IThinker) and unblocks the build. Idempotent.
-echo "[build-native-unix] Applying private-IThinker → public-IThinker workaround for MEM_OVERRIDE."
-# perl -i has consistent semantics across BSD (macOS) and GNU (Linux) sed,
-# and is byte-safe regardless of LC_ALL — BSD sed throws "illegal byte
-# sequence" on GNS sources under macOS's default UTF-8 locale.
-find "$GNS/src" -type f \( -name '*.h' -o -name '*.cpp' \) -exec \
-    perl -i -pe 's|: private IThinker$|: public IThinker|' {} +
-
-# Bump CMakeLists default CXX_STANDARD from 11 to 17. The set_target_common_gns_properties
-# function pins every GNS target to C++11; the main lib then upgrades via
-# target_compile_features(cxx_std_17), but the certtool target only gets the
-# default. Homebrew's protobuf 34 pulls in abseil headers that require C++17
-# ("C++ versions less than C++17 are not supported."), so anything below 17
-# fails. Idempotent.
-echo "[build-native-unix] Patching GNS CMakeLists to default CXX_STANDARD 17."
-perl -i -pe 's|CXX_STANDARD 11\b|CXX_STANDARD 17|' "$GNS/CMakeLists.txt"
-
 NPROC="$(getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)"
+DEPS_DIR="$REPO/build/deps-$RID"
+DOWNLOAD_DIR="$REPO/build/downloads"
+PROTOBUF_SOURCE_DIR="$DEPS_DIR/protobuf-$PROTOBUF_VERSION"
+PROTOBUF_BUILD_DIR="$DEPS_DIR/protobuf-build"
+PROTOBUF_PREFIX="$DEPS_DIR/protobuf-prefix"
+OPENSSL_SOURCE_DIR="$DEPS_DIR/openssl-$OPENSSL_VERSION"
+OPENSSL_PREFIX="$DEPS_DIR/openssl-prefix"
 BUILD_DIR="$REPO/build/build-$RID"
+mkdir -p "$DOWNLOAD_DIR"
+
+verify_sha256() {
+    local file="$1"
+    local expected="$2"
+    local actual
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$file" | awk '{print $1}')"
+    else
+        actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        echo "SHA-256 mismatch for $file" >&2
+        echo "  expected: $expected" >&2
+        echo "  actual:   $actual" >&2
+        exit 1
+    fi
+}
+
+build_static_protobuf() {
+    local archive="$DOWNLOAD_DIR/$PROTOBUF_ARCHIVE"
+
+    if [ -f "$PROTOBUF_PREFIX/lib/libprotobuf.a" ] && [ -x "$PROTOBUF_PREFIX/bin/protoc" ]; then
+        echo "[build-native-unix] Reusing cached protobuf $PROTOBUF_VERSION."
+        return
+    fi
+
+    if [ ! -f "$archive" ]; then
+        echo "[build-native-unix] Downloading protobuf $PROTOBUF_VERSION."
+        curl --fail --location --retry 3 --output "$archive" "$PROTOBUF_URL"
+    fi
+    verify_sha256 "$archive" "$PROTOBUF_SHA256"
+
+    rm -rf "$PROTOBUF_SOURCE_DIR" "$PROTOBUF_BUILD_DIR" "$PROTOBUF_PREFIX"
+    mkdir -p "$DEPS_DIR"
+    tar -xzf "$archive" -C "$DEPS_DIR"
+
+    echo "[build-native-unix] Building protobuf $PROTOBUF_VERSION as static PIC."
+    cmake -S "$PROTOBUF_SOURCE_DIR/cmake" -B "$PROTOBUF_BUILD_DIR" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_STANDARD=17 \
+        -DCMAKE_CXX_STANDARD_REQUIRED=ON \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DCMAKE_INSTALL_PREFIX="$PROTOBUF_PREFIX" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -Dprotobuf_BUILD_SHARED_LIBS=OFF \
+        -Dprotobuf_BUILD_TESTS=OFF \
+        -Dprotobuf_BUILD_EXAMPLES=OFF \
+        -Dprotobuf_BUILD_PROTOC_BINARIES=ON \
+        -Dprotobuf_BUILD_LIBPROTOC=OFF \
+        -Dprotobuf_WITH_ZLIB=OFF \
+        "${EXTRA_CMAKE_ARGS[@]}"
+    cmake --build "$PROTOBUF_BUILD_DIR" --parallel "$NPROC"
+    cmake --install "$PROTOBUF_BUILD_DIR"
+
+    test -f "$PROTOBUF_PREFIX/lib/libprotobuf.a"
+    test -x "$PROTOBUF_PREFIX/bin/protoc"
+}
+
+build_static_openssl() {
+    local archive="$DOWNLOAD_DIR/$OPENSSL_ARCHIVE"
+    local marker="$OPENSSL_PREFIX/.gns-static-build-$OPENSSL_BUILD_REVISION"
+
+    if [ -f "$marker" ] &&
+        [ -f "$OPENSSL_PREFIX/lib/libcrypto.a" ] &&
+        [ -f "$OPENSSL_PREFIX/lib/libssl.a" ]; then
+        echo "[build-native-unix] Reusing cached OpenSSL $OPENSSL_VERSION."
+        return
+    fi
+
+    if [ ! -f "$archive" ]; then
+        echo "[build-native-unix] Downloading OpenSSL $OPENSSL_VERSION."
+        curl --fail --location --retry 3 --output "$archive" "$OPENSSL_URL"
+    fi
+    verify_sha256 "$archive" "$OPENSSL_SHA256"
+
+    rm -rf "$OPENSSL_SOURCE_DIR" "$OPENSSL_PREFIX"
+    tar -xzf "$archive" -C "$DEPS_DIR"
+
+    echo "[build-native-unix] Building OpenSSL $OPENSSL_VERSION as static PIC."
+    (
+        cd "$OPENSSL_SOURCE_DIR"
+        ./Configure "$OPENSSL_TARGET" \
+            no-shared \
+            no-tests \
+            no-docs \
+            no-apps \
+            no-module \
+            no-zlib \
+            --prefix="$OPENSSL_PREFIX" \
+            --libdir=lib \
+            -fPIC \
+            -fvisibility=hidden
+        make -s -j"$NPROC"
+        make -s install_sw
+    )
+
+    test -f "$OPENSSL_PREFIX/lib/libcrypto.a"
+    test -f "$OPENSSL_PREFIX/lib/libssl.a"
+    touch "$marker"
+}
+
+build_static_protobuf
+build_static_openssl
+
+PROTOBUF_CMAKE_ARGS=(
+    "-DProtobuf_USE_STATIC_LIBS=ON"
+    "-DProtobuf_DIR=$PROTOBUF_PREFIX/lib/cmake/protobuf"
+    "-DProtobuf_INCLUDE_DIR=$PROTOBUF_PREFIX/include"
+    "-DProtobuf_LIBRARY=$PROTOBUF_PREFIX/lib/libprotobuf.a"
+    "-DProtobuf_PROTOC_EXECUTABLE=$PROTOBUF_PREFIX/bin/protoc"
+)
+OPENSSL_CMAKE_ARGS=(
+    "-DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=TRUE"
+    "-DOPENSSL_ROOT_DIR=$OPENSSL_PREFIX"
+    "-DOPENSSL_CRYPTO_LIBRARY=$OPENSSL_PREFIX/lib/libcrypto.a"
+    "-DOPENSSL_SSL_LIBRARY=$OPENSSL_PREFIX/lib/libssl.a"
+    "-DOPENSSL_INCLUDE_DIR=$OPENSSL_PREFIX/include"
+)
+
 rm -rf "$BUILD_DIR"
 
 echo "[build-native-unix] cmake -S $GNS -B $BUILD_DIR -DCMAKE_BUILD_TYPE=Release ${EXTRA_CMAKE_ARGS[*]:-}"
-# Static-link OpenSSL (libcrypto.a / libssl.a are PIC on Ubuntu's libssl-dev)
-# so consumers don't need libcrypto.so.3 at runtime. Protobuf stays dynamic
-# because Ubuntu's libprotobuf.a is not compiled with -fPIC; consumers must
-# have libprotobuf installed (`apt install libprotobuf23` on jammy).
+# Static-link OpenSSL and our pinned PIC protobuf build so consumers do not
+# need either library installed at runtime.
 #
 # STEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE gates the export of
 # SteamNetworkingSockets_SetCustomMemoryAllocator; without it, the symbol
@@ -92,6 +207,7 @@ cmake -S "$GNS" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_STANDARD=17 \
     -DCMAKE_CXX_STANDARD_REQUIRED=ON \
+    "-DCMAKE_SHARED_LINKER_FLAGS=$PLATFORM_SHARED_LINKER_FLAGS" \
     -DBUILD_SHARED_LIB=ON \
     -DBUILD_STATIC_LIB=OFF \
     -DBUILD_TESTS=OFF \
@@ -102,6 +218,8 @@ cmake -S "$GNS" -B "$BUILD_DIR" \
     -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DENABLE_ICE=OFF \
     -DCMAKE_CXX_FLAGS="-DSTEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE -DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
+    "${PROTOBUF_CMAKE_ARGS[@]}" \
+    "${OPENSSL_CMAKE_ARGS[@]}" \
     "${EXTRA_CMAKE_ARGS[@]}"
 
 echo "[build-native-unix] cmake --build $BUILD_DIR --parallel $NPROC"
@@ -118,11 +236,8 @@ NATIVE_OUT="$REPO/artifacts/native/$RID"
 mkdir -p "$NATIVE_OUT"
 cp -f "$LIB" "$NATIVE_OUT/libGameNetworkingSockets.$LIB_EXT"
 
-# Build the certtool in a SECOND cmake configure: it can't link with
-# STEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE defined globally (the macro
-# routes malloc/free/realloc through symbols the certtool target's source
-# set doesn't include — those are in steamnetworkingsockets_lowlevel.cpp,
-# which only the shared lib pulls in).
+# Build the certtool in a second configure without the library-only memory
+# allocator override.
 TOOLS_BUILD_DIR="$REPO/build/build-$RID-tools"
 rm -rf "$TOOLS_BUILD_DIR"
 echo "[build-native-unix] cmake configure (certtool) in $TOOLS_BUILD_DIR"
@@ -140,6 +255,8 @@ cmake -S "$GNS" -B "$TOOLS_BUILD_DIR" \
     -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DENABLE_ICE=OFF \
     -DCMAKE_CXX_FLAGS="-DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
+    "${PROTOBUF_CMAKE_ARGS[@]}" \
+    "${OPENSSL_CMAKE_ARGS[@]}" \
     "${EXTRA_CMAKE_ARGS[@]}"
 
 echo "[build-native-unix] cmake --build $TOOLS_BUILD_DIR --target steamnetworkingsockets_certtool --parallel $NPROC"
@@ -181,12 +298,40 @@ if [ "$LIB_EXT" = "so" ]; then
         grep -E ' (GameNetworkingSockets_|SteamAPI_)' <<<"$EXPORTS" | head -5 >&2 || true
         exit 1
     fi
+    if grep -qE ' (_ZN6google8protobuf|EVP_|OPENSSL_|SSL_|CRYPTO_|AES_)' <<<"$EXPORTS"; then
+        echo "libGameNetworkingSockets.so exports private dependency symbols." >&2
+        grep -E ' (_ZN6google8protobuf|EVP_|OPENSSL_|SSL_|CRYPTO_|AES_)' <<<"$EXPORTS" | head -20 >&2
+        exit 1
+    fi
+
+    for binary in "$NATIVE_OUT/libGameNetworkingSockets.so" "$NATIVE_OUT/steamnetworkingsockets_certtool"; do
+        NEEDED="$(readelf -d "$binary" | grep NEEDED || true)"
+        if grep -Eqi 'protobuf|libcrypto|libssl' <<<"$NEEDED"; then
+            echo "$binary unexpectedly has a dynamic protobuf/OpenSSL dependency:" >&2
+            echo "$NEEDED" >&2
+            exit 1
+        fi
+    done
 elif [ "$LIB_EXT" = "dylib" ]; then
     EXPORTS="$(nm -gU "$NATIVE_OUT/libGameNetworkingSockets.dylib")"
     if ! grep -qE ' _GameNetworkingSockets_Init$' <<<"$EXPORTS"; then
         echo "libGameNetworkingSockets.dylib does not export GameNetworkingSockets_Init" >&2
         exit 1
     fi
+    if grep -qE ' __ZN6google8protobuf| _(EVP_|OPENSSL_|SSL_|CRYPTO_|AES_)' <<<"$EXPORTS"; then
+        echo "libGameNetworkingSockets.dylib exports private dependency symbols." >&2
+        grep -E ' __ZN6google8protobuf| _(EVP_|OPENSSL_|SSL_|CRYPTO_|AES_)' <<<"$EXPORTS" | head -20 >&2
+        exit 1
+    fi
+
+    for binary in "$NATIVE_OUT/libGameNetworkingSockets.dylib" "$NATIVE_OUT/steamnetworkingsockets_certtool"; do
+        DYLIBS="$(otool -L "$binary")"
+        if grep -Eqi 'protobuf|libcrypto|libssl|/opt/homebrew|/usr/local' <<<"$DYLIBS"; then
+            echo "$binary unexpectedly has a package-manager protobuf/OpenSSL dependency:" >&2
+            echo "$DYLIBS" >&2
+            exit 1
+        fi
+    done
 fi
 
 echo "[build-native-unix] symbol check OK - $RID artifacts staged."

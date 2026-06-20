@@ -3,12 +3,16 @@ name: build-native
 on:
   workflow_call:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'external/GameNetworkingSockets/**'
+      - 'build/**'
+      - '.github/workflows/build-native.yml'
   push:
     branches: [main]
     paths:
       - 'external/GameNetworkingSockets/**'
-      - 'build/build-native-*.sh'
-      - 'build/build-native-*.ps1'
+      - 'build/**'
       - '.github/workflows/build-native.yml'
 
 permissions:
@@ -53,15 +57,34 @@ jobs:
         if: matrix.rid == 'linux-x64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev libprotobuf-dev protobuf-compiler
-
-      - name: Install macOS dependencies
-        if: matrix.rid == 'osx-arm64'
-        run: brew install openssl protobuf
+          sudo apt-get install -y perl
 
       - name: Build native library (${{ matrix.rid }})
         shell: bash
         run: ${{ matrix.script }}
+
+      - name: Set up .NET (Unix smoke test)
+        if: runner.os != 'Windows'
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Run native smoke tests (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build tests/GameNetworkingSockets.Net.Tests/GameNetworkingSockets.Net.Tests.csproj -c Release
+          output=tests/GameNetworkingSockets.Net.Tests/bin/Release/net10.0
+          case "${{ matrix.rid }}" in
+            linux-x64)
+              cp artifacts/native/linux-x64/libGameNetworkingSockets.so "$output/"
+              ;;
+            osx-arm64)
+              cp artifacts/native/osx-arm64/libGameNetworkingSockets.dylib "$output/"
+              ;;
+          esac
+          dotnet test tests/GameNetworkingSockets.Net.Tests/GameNetworkingSockets.Net.Tests.csproj -c Release --no-build
 
       - name: Upload GameNetworkingSockets shared library
         uses: actions/upload-artifact@v4

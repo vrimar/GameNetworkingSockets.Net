@@ -80,28 +80,33 @@ The native libraries inside the NuGet package have these external runtime depend
 | RID | Bundled in package | Required on host |
 |---|---|---|
 | `win-x64` | OpenSSL, protobuf, abseil (DLLs ship next to `GameNetworkingSockets.dll`) | UCRT (universal on Win10+) |
-| `linux-x64` | OpenSSL (statically linked) | `libprotobuf23` — `sudo apt install libprotobuf23` on Ubuntu 22.04+ |
-| `osx-arm64` | OpenSSL (statically linked) | `protobuf` — `brew install protobuf` |
+| `linux-x64` | OpenSSL and protobuf (statically linked) | Standard C/C++ runtime libraries |
+| `osx-arm64` | OpenSSL and protobuf (statically linked) | macOS system libraries |
 
-Ubuntu's `libprotobuf.a` is not built with `-fPIC`, so it cannot be statically linked into a shared library. Until upstream Debian/Ubuntu changes that, consumers of the Linux package will need `libprotobuf23` available at runtime.
+The Unix build downloads protobuf 21.12 and OpenSSL 3.5.7 from their official
+release archives, verifies their SHA-256 checksums, and builds both from source
+as position-independent static libraries. This avoids coupling package
+consumers to distribution or Homebrew native ABIs.
 
 ## Building from source
 
 Prerequisites:
 
 - .NET SDK 10 (see [`global.json`](global.json))
-- CMake 3.15+ and Python 3 (required by GameNetworkingSockets to generate sources from protobuf)
+- CMake 3.15+, curl, and Perl
 - A C++ toolchain (MSVC on Windows, gcc/clang on Linux, Apple clang on macOS)
 - PowerShell 7+ (for the Windows native build script)
-- Either OpenSSL **or** libsodium (with development headers), plus Protocol Buffers
   - Windows: installed automatically via [vcpkg](https://github.com/microsoft/vcpkg) manifest mode (`external/GameNetworkingSockets/vcpkg.json`); the build script bootstraps a local vcpkg under `build/vcpkg-local` on first run
-  - Linux (Debian/Ubuntu): `sudo apt install libssl-dev libprotobuf-dev protobuf-compiler`
-  - macOS (Homebrew): `brew install openssl protobuf`
+  - Linux (Debian/Ubuntu): `sudo apt install build-essential cmake curl perl`
+  - macOS (Homebrew): `brew install cmake`
+
+Protobuf and OpenSSL are fetched and built by `build-native-unix.sh`; system
+installations of either library are neither used nor required.
 
 Steps:
 
 ```bash
-# 1. Initialize the GameNetworkingSockets submodule (recursive — pulls protobuf etc).
+# 1. Initialize the GameNetworkingSockets submodule and its dependencies.
 pwsh build/bootstrap.ps1
 
 # 2. Build the native shared library for your platform.

@@ -22,6 +22,8 @@ local-feed/
 # Native build outputs
 .build/
 build/build-*/
+build/deps-*/
+build/downloads/
 build/vcpkg_installed/
 build/vcpkg-local/
 build/*.log
