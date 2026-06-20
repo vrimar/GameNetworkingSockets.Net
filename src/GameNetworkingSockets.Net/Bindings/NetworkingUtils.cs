@@ -105,7 +105,8 @@ public sealed partial class NetworkingUtils : IDisposable
     /// <summary>
     /// Allocates an outgoing message owned by the native side. The returned
     /// pointer must be either submitted via <see cref="NetworkingSockets.SendMessages"/>
-    /// (which transfers ownership) or released via
+    /// in ownership-transfer mode, retained for retry using its mutable-span
+    /// overload, or released via
     /// <see cref="NetworkingMessage.Release"/>.
     /// </summary>
     public nint AllocateMessage(int bufferSize) =>

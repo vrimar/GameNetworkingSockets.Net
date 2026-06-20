@@ -235,6 +235,43 @@ public class SmokeTests
         }
     }
 
+    [SkippableFact]
+    public unsafe void SendMessagesCanRetainFailedMessagesForRetry()
+    {
+        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+
+        Assert.True(Library.Initialize(out _));
+        nint message = 0;
+        try
+        {
+            var sockets = new NetworkingSockets();
+            using var utils = new NetworkingUtils();
+
+            message = utils.AllocateMessage(bufferSize: 0);
+            Assert.NotEqual(0, message);
+
+            // An invalid connection guarantees a send failure. In retention
+            // mode native code must leave the pointer in place for retry.
+            ((NetworkingMessage*)message)->connection = 0;
+            Span<nint> messages = stackalloc nint[] { message };
+            Span<long> results = stackalloc long[1];
+
+            sockets.SendMessages(messages, results, deleteFailedMessages: false);
+
+            Assert.Equal(message, messages[0]);
+            Assert.Equal(-(long)Result.InvalidParam, results[0]);
+
+            NetworkingMessage.Release(message);
+            message = 0;
+        }
+        finally
+        {
+            if (message != 0)
+                NetworkingMessage.Release(message);
+            Library.Deinitialize();
+        }
+    }
+
     private static bool NativeLibraryPresent()
     {
         var dir = AppContext.BaseDirectory;

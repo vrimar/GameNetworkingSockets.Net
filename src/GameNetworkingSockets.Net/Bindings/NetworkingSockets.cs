@@ -145,24 +145,53 @@ public sealed partial class NetworkingSockets
         SteamAPI_ISteamNetworkingSockets_FlushMessagesOnConnection(_nativeSockets, connection);
 
     /// <summary>
-    /// Batched send. Each <paramref name="messagePointers"/> entry must point
-    /// at a <c>SteamNetworkingMessage_t</c> allocated via
-    /// <see cref="NetworkingUtils.AllocateMessage"/>; the native side takes
-    /// ownership and frees them.
+    /// Batched send that transfers ownership of every message to the native
+    /// library, including messages that fail or are not attempted.
     /// </summary>
-    /// <param name="messagePointers">Array of native message pointers.</param>
+    /// <param name="messagePointers">Native message pointers allocated via
+    /// <see cref="NetworkingUtils.AllocateMessage"/>. Do not access them after
+    /// this method returns.</param>
     /// <param name="results">Output array (same length); each slot receives a
     /// positive message number on success or a negative <see cref="Result"/> code on failure.</param>
     public unsafe void SendMessages(ReadOnlySpan<nint> messagePointers, Span<long> results)
     {
-        if (results.Length < messagePointers.Length)
-            throw new ArgumentException($"results buffer too small ({results.Length} < {messagePointers.Length}).", nameof(results));
+        ValidateSendMessagesArguments(messagePointers.Length, results.Length);
 
         fixed (nint* msgs = messagePointers)
         fixed (long* outs = results)
         {
-            SteamAPI_ISteamNetworkingSockets_SendMessages(_nativeSockets, messagePointers.Length, (nint)msgs, (nint)outs);
+            SteamAPI_ISteamNetworkingSockets_SendMessages(
+                _nativeSockets, messagePointers.Length, (nint)msgs, (nint)outs, deleteFailedMessages: true);
         }
+    }
+
+    /// <summary>
+    /// Batched send with explicit failed-message ownership behavior.
+    /// </summary>
+    /// <remarks>
+    /// When <paramref name="deleteFailedMessages"/> is <see langword="false"/>,
+    /// successfully queued entries are replaced with zero. Failed and
+    /// unattempted entries remain in <paramref name="messagePointers"/> so the
+    /// caller can retry or release them. When it is <see langword="true"/>,
+    /// native code owns every message after the call and does not modify the
+    /// pointer array.
+    /// </remarks>
+    public unsafe void SendMessages(Span<nint> messagePointers, Span<long> results, bool deleteFailedMessages)
+    {
+        ValidateSendMessagesArguments(messagePointers.Length, results.Length);
+
+        fixed (nint* msgs = messagePointers)
+        fixed (long* outs = results)
+        {
+            SteamAPI_ISteamNetworkingSockets_SendMessages(
+                _nativeSockets, messagePointers.Length, (nint)msgs, (nint)outs, deleteFailedMessages);
+        }
+    }
+
+    private static void ValidateSendMessagesArguments(int messageCount, int resultsLength)
+    {
+        if (resultsLength < messageCount)
+            throw new ArgumentException($"results buffer too small ({resultsLength} < {messageCount}).", "results");
     }
 
     /// <summary>
@@ -440,7 +469,12 @@ public sealed partial class NetworkingSockets
     internal static partial Result SteamAPI_ISteamNetworkingSockets_SendMessageToConnection(nint sockets, uint connection, nint data, uint length, int flags, nint outMessageNumber);
 
     [LibraryImport(LibraryName)]
-    internal static partial void SteamAPI_ISteamNetworkingSockets_SendMessages(nint sockets, int nMessages, nint pMessages, nint pOutMessageNumberOrResult);
+    internal static partial void SteamAPI_ISteamNetworkingSockets_SendMessages(
+        nint sockets,
+        int nMessages,
+        nint pMessages,
+        nint pOutMessageNumberOrResult,
+        [MarshalAs(UnmanagedType.U1)] bool deleteFailedMessages);
 
     [LibraryImport(LibraryName)]
     internal static partial Result SteamAPI_ISteamNetworkingSockets_FlushMessagesOnConnection(nint sockets, uint connection);
