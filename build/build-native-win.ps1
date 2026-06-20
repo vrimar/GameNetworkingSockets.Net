@@ -28,6 +28,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Resolve-Path "$PSScriptRoot/.."
 $gns = Join-Path $repo 'external/GameNetworkingSockets'
+$triplets = Join-Path $repo 'build/triplets'
+$targetTriplet = 'x64-windows-release'
 
 if (!(Test-Path (Join-Path $gns 'include/steam/steamnetworkingsockets.h'))) {
     Write-Error "GameNetworkingSockets submodule missing at $gns. Run bootstrap.ps1 first."
@@ -105,7 +107,8 @@ Write-Host "[build-native-win] cmake configure (Generator='$Generator', vcpkg='$
 # all targets in the build see it.
 & cmake -S $gns -B $buildDir -G $Generator -A x64 `
     "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
-    "-DVCPKG_TARGET_TRIPLET=x64-windows" `
+    "-DVCPKG_OVERLAY_TRIPLETS=$triplets" `
+    "-DVCPKG_TARGET_TRIPLET=$targetTriplet" `
     -DBUILD_SHARED_LIB=ON `
     -DBUILD_STATIC_LIB=OFF `
     -DBUILD_TESTS=OFF `
@@ -151,7 +154,8 @@ New-Item -ItemType Directory -Path $toolsBuildDir -Force | Out-Null
 Write-Host "[build-native-win] cmake configure (certtool) in $toolsBuildDir"
 & cmake -S $gns -B $toolsBuildDir -G $Generator -A x64 `
     "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
-    "-DVCPKG_TARGET_TRIPLET=x64-windows" `
+    "-DVCPKG_OVERLAY_TRIPLETS=$triplets" `
+    "-DVCPKG_TARGET_TRIPLET=$targetTriplet" `
     -DBUILD_SHARED_LIB=OFF `
     -DBUILD_STATIC_LIB=ON `
     -DBUILD_TESTS=OFF `

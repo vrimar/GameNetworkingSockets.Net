@@ -53,6 +53,20 @@ jobs:
         if: matrix.rid == 'win-x64'
         uses: microsoft/setup-msbuild@v2
 
+      - name: Restore vcpkg binary cache (Windows)
+        if: matrix.rid == 'win-x64'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-binary-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('external/GameNetworkingSockets/vcpkg.json', 'build/triplets/**') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Prepare vcpkg binary cache (Windows)
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force '${{ github.workspace }}/.vcpkg-binary-cache' | Out-Null
+
       - name: Install Linux dependencies
         if: matrix.rid == 'linux-x64'
         run: |
@@ -61,6 +75,8 @@ jobs:
 
       - name: Build native library (${{ matrix.rid }})
         shell: bash
+        env:
+          VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite
         run: ${{ matrix.script }}
 
       - name: Set up .NET (Unix smoke test)
