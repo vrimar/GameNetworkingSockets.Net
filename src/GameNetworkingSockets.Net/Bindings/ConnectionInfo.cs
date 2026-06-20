@@ -7,7 +7,7 @@ namespace Valve.Sockets;
 /// Payload of the <c>SteamNetConnectionStatusChanged</c> callback. Maps to
 /// <c>SteamNetConnectionStatusChangedCallback_t</c>.
 /// </summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct StatusInfo
 {
     public uint connection;
@@ -25,7 +25,7 @@ public struct StatusInfo
 /// layout works out because <see cref="Address"/> is declared <c>Pack = 1</c>
 /// to mirror the native <c>#pragma pack(1)</c> on <c>SteamNetworkingIPAddr</c>.
 /// </remarks>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct ConnectionInfo
 {
     public NetworkingIdentity identity;
@@ -63,7 +63,7 @@ public struct ConnectionInfo
 /// array dropped from <c>[16]</c> to <c>[15]</c> uint32s to keep the total
 /// struct size unchanged.
 /// </remarks>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct ConnectionStatus
 {
     public ConnectionState state;
@@ -87,7 +87,7 @@ public struct ConnectionStatus
 }
 
 /// <summary>Per-lane real-time telemetry. Maps to <c>SteamNetConnectionRealTimeLaneStatus_t</c>.</summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct ConnectionLaneStatus
 {
     public int pendingUnreliable;
@@ -105,7 +105,7 @@ public struct ConnectionLaneStatus
 /// Payload of the global authentication-status-changed callback. Maps to
 /// <c>SteamNetAuthenticationStatus_t</c>.
 /// </summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct AuthenticationStatus
 {
     public Availability availability;
@@ -121,7 +121,7 @@ public struct AuthenticationStatus
 /// Payload of the global relay-network-status-changed callback. Maps to
 /// <c>SteamRelayNetworkStatus_t</c>.
 /// </summary>
-[StructLayout(LayoutKind.Sequential)]
+[StructLayout(LayoutKind.Sequential, Pack = 4)]
 public struct RelayNetworkStatus
 {
     public Availability availability;

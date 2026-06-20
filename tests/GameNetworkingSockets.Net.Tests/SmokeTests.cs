@@ -65,6 +65,9 @@ public class SmokeTests
         Assert.Equal(180, (int)Marshal.OffsetOf<ConnectionInfo>(nameof(ConnectionInfo.endReason)));
         Assert.Equal(440, (int)Marshal.OffsetOf<ConnectionInfo>(nameof(ConnectionInfo.flags)));
         Assert.Equal(696, Marshal.SizeOf<ConnectionInfo>());
+        Assert.Equal(4, (int)Marshal.OffsetOf<StatusInfo>(nameof(StatusInfo.connectionInfo)));
+        Assert.Equal(700, (int)Marshal.OffsetOf<StatusInfo>(nameof(StatusInfo.oldState)));
+        Assert.Equal(704, Marshal.SizeOf<StatusInfo>());
     }
 
     [SkippableFact]

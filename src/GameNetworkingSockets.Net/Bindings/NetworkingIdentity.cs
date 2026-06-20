@@ -8,7 +8,7 @@ namespace Valve.Sockets;
 /// <c>SteamNetworkingIdentity</c>. The C++ struct is 136 bytes:
 /// 4-byte type tag, 4-byte alignment padding, then a 128-byte payload union.
 /// </summary>
-[StructLayout(LayoutKind.Explicit, Size = Size)]
+[StructLayout(LayoutKind.Explicit, Pack = 1, Size = Size)]
 public partial struct NetworkingIdentity : IEquatable<NetworkingIdentity>
 {
     internal const int Size = 136;
