@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    For .NET-for-Android consumers, register the per-ABI native library so the
+    Android packaging steps place it in lib/<abi>/ of the APK. Desktop RIDs are
+    handled by the runtimes/<rid>/native assets and ignore this file.
+  -->
+  <ItemGroup Condition="'$(TargetPlatformIdentifier)' == 'android'">
+    <AndroidNativeLibrary Include="$(MSBuildThisFileDirectory)..\runtimes\android-arm64\native\libGameNetworkingSockets.so"
+                          Condition="Exists('$(MSBuildThisFileDirectory)..\runtimes\android-arm64\native\libGameNetworkingSockets.so')">
+      <Abi>arm64-v8a</Abi>
+    </AndroidNativeLibrary>
+    <AndroidNativeLibrary Include="$(MSBuildThisFileDirectory)..\runtimes\android-x64\native\libGameNetworkingSockets.so"
+                          Condition="Exists('$(MSBuildThisFileDirectory)..\runtimes\android-x64\native\libGameNetworkingSockets.so')">
+      <Abi>x86_64</Abi>
+    </AndroidNativeLibrary>
+  </ItemGroup>
+
+</Project>

@@ -1,6 +1,6 @@
 # GameNetworkingSockets.Net
 
-Cross-platform .NET bindings for Valve's [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) (the open-source standalone variant of Steam's networking transport), with native binaries bundled for `win-x64`, `linux-x64`, and `osx-arm64`.
+Cross-platform .NET bindings for Valve's [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) (the open-source standalone variant of Steam's networking transport), with native binaries bundled for `win-x64`, `linux-x64`, `osx-arm64`, and Android (`android-arm64`, `android-x64`).
 
 The managed surface is derived from Stanislav Denisov's [ValveSockets-CSharp](https://github.com/nxrighthere/ValveSockets-CSharp) wrapper, modernized for [`LibraryImport`](https://learn.microsoft.com/dotnet/standard/native-interop/source-generated-marshalling) (source-generated P/Invoke, AOT-compatible) and updated against the current `steamnetworkingsockets_flat.h` API.
 
@@ -8,7 +8,7 @@ The managed surface is derived from Stanislav Denisov's [ValveSockets-CSharp](ht
 
 | Package | Contents |
 |---|---|
-| `GameNetworkingSockets.Net` | Managed bindings (`net8.0`/`net10.0`) plus `GameNetworkingSockets.dll` / `libGameNetworkingSockets.so` / `libGameNetworkingSockets.dylib` under `runtimes/{rid}/native/`. AOT-compatible. |
+| `GameNetworkingSockets.Net` | Managed bindings (`net8.0`/`net10.0`) plus `GameNetworkingSockets.dll` / `libGameNetworkingSockets.so` / `libGameNetworkingSockets.dylib` under `runtimes/{rid}/native/` (desktop + Android). AOT-compatible. |
 
 ## Quick start
 
@@ -82,11 +82,16 @@ The native libraries inside the NuGet package have these external runtime depend
 | `win-x64` | OpenSSL, protobuf, abseil (DLLs ship next to `GameNetworkingSockets.dll`) | UCRT (universal on Win10+) |
 | `linux-x64` | OpenSSL and protobuf (statically linked) | Standard C/C++ runtime libraries |
 | `osx-arm64` | OpenSSL and protobuf (statically linked) | macOS system libraries |
+| `android-arm64`, `android-x64` | OpenSSL, protobuf, and libc++ (statically linked) | Android system libraries only (`liblog`, `libc`, `libm`, `libdl`); min API 21 |
 
-The Unix build downloads protobuf 21.12 and OpenSSL 3.5.7 from their official
-release archives, verifies their SHA-256 checksums, and builds both from source
-as position-independent static libraries. This avoids coupling package
-consumers to distribution or Homebrew native ABIs.
+The Unix and Android builds download protobuf 21.12 and OpenSSL 3.5.7 from their
+official release archives, verify their SHA-256 checksums, and build both from
+source as position-independent static libraries. This avoids coupling package
+consumers to distribution or Homebrew native ABIs. The Android library links
+libc++ statically as well, so each `.so` carries no extra runtime dependency.
+
+.NET-for-Android consumers get the per-ABI `.so` placed into the APK
+(`lib/<abi>/`) automatically via the bundled `buildTransitive` targets.
 
 ## Building from source
 
@@ -95,6 +100,7 @@ Prerequisites:
 - .NET SDK 10 (see [`global.json`](global.json))
 - CMake 3.15+, curl, and Perl
 - A C++ toolchain (MSVC on Windows, gcc/clang on Linux, Apple clang on macOS)
+- For Android: the Android NDK (r27 tested), located via `ANDROID_NDK_ROOT` or `ANDROID_NDK_LATEST_HOME`
 - PowerShell 7+ (for the Windows native build script)
   - Windows: installed automatically via [vcpkg](https://github.com/microsoft/vcpkg) manifest mode (`external/GameNetworkingSockets/vcpkg.json`); the build script bootstraps a local vcpkg under `build/vcpkg-local` on first run
   - Linux (Debian/Ubuntu): `sudo apt install build-essential cmake curl perl`
@@ -110,9 +116,11 @@ Steps:
 pwsh build/bootstrap.ps1
 
 # 2. Build the native shared library for your platform.
-pwsh build/build-native-win.ps1              # Windows
-bash build/build-native-unix.sh linux-x64    # Linux
-bash build/build-native-unix.sh osx-arm64    # macOS (Apple Silicon)
+pwsh build/build-native-win.ps1                  # Windows
+bash build/build-native-unix.sh linux-x64        # Linux
+bash build/build-native-unix.sh osx-arm64        # macOS (Apple Silicon)
+bash build/build-native-android.sh arm64-v8a     # Android arm64-v8a (-> android-arm64)
+bash build/build-native-android.sh x86_64        # Android x86_64   (-> android-x64)
 
 # 3. Build the managed solution.
 dotnet build GameNetworkingSockets.Net.sln

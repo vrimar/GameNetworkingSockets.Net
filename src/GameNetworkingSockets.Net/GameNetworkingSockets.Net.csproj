@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>GameNetworkingSockets.Net</PackageId>
-    <Description>Cross-platform .NET bindings for Valve's GameNetworkingSockets (the open-source standalone Steam networking transport), with native binaries bundled for win-x64, linux-x64, and osx-arm64. AOT-compatible.</Description>
+    <Description>Cross-platform .NET bindings for Valve's GameNetworkingSockets (the open-source standalone Steam networking transport), with native binaries bundled for win-x64, linux-x64, osx-arm64, and Android (arm64-v8a, x86_64). AOT-compatible.</Description>
     <PackageTags>gamenetworkingsockets;valve;steam;networking;udp;reliable;p2p;native</PackageTags>
 
     <IsAotCompatible>true</IsAotCompatible>
@@ -25,13 +25,24 @@
 
   <!--
     The Windows build dynamically links to OpenSSL, protobuf, and abseil, and
-    stages those DLLs next to GameNetworkingSockets.dll. Unix builds statically
-    link OpenSSL and protobuf and therefore stage only the GNS library.
+    stages those DLLs next to GameNetworkingSockets.dll. Unix and Android builds
+    statically link OpenSSL and protobuf and therefore stage only the GNS library.
   -->
   <ItemGroup>
     <None Include="$(NativeArtifactsDir)win-x64\*.dll"     Pack="true" PackagePath="runtimes\win-x64\native\"   Condition="Exists('$(NativeArtifactsDir)win-x64\GameNetworkingSockets.dll')" />
     <None Include="$(NativeArtifactsDir)linux-x64\*.so"    Pack="true" PackagePath="runtimes\linux-x64\native\" Condition="Exists('$(NativeArtifactsDir)linux-x64\libGameNetworkingSockets.so')" />
     <None Include="$(NativeArtifactsDir)osx-arm64\*.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\" Condition="Exists('$(NativeArtifactsDir)osx-arm64\libGameNetworkingSockets.dylib')" />
+    <None Include="$(NativeArtifactsDir)android-arm64\*.so" Pack="true" PackagePath="runtimes\android-arm64\native\" Condition="Exists('$(NativeArtifactsDir)android-arm64\libGameNetworkingSockets.so')" />
+    <None Include="$(NativeArtifactsDir)android-x64\*.so"   Pack="true" PackagePath="runtimes\android-x64\native\"   Condition="Exists('$(NativeArtifactsDir)android-x64\libGameNetworkingSockets.so')" />
+  </ItemGroup>
+
+  <!--
+    .NET for Android does not consume runtimes\<rid>\native assets the way the
+    desktop runtimes do; ship a buildTransitive .targets that registers the
+    per-ABI .so as an AndroidNativeLibrary so it lands in lib\<abi>\ of the APK.
+  -->
+  <ItemGroup>
+    <None Include="buildTransitive\GameNetworkingSockets.Net.targets" Pack="true" PackagePath="buildTransitive\" />
   </ItemGroup>
 
   <!--
@@ -52,7 +63,7 @@
 
   <Target Name="WarnIfNoNatives" BeforeTargets="Pack" Condition="'$(SkipNativeWarning)' != 'true'">
     <Warning Code="GNSNET001" Text="No native libraries found in $(NativeArtifactsDir). The package will ship without native binaries. Set NativeArtifactsDir or place artifacts in the expected layout. Set SkipNativeWarning=true to silence."
-             Condition="!Exists('$(NativeArtifactsDir)win-x64\GameNetworkingSockets.dll') and !Exists('$(NativeArtifactsDir)linux-x64\libGameNetworkingSockets.so') and !Exists('$(NativeArtifactsDir)osx-arm64\libGameNetworkingSockets.dylib')" />
+             Condition="!Exists('$(NativeArtifactsDir)win-x64\GameNetworkingSockets.dll') and !Exists('$(NativeArtifactsDir)linux-x64\libGameNetworkingSockets.so') and !Exists('$(NativeArtifactsDir)osx-arm64\libGameNetworkingSockets.dylib') and !Exists('$(NativeArtifactsDir)android-arm64\libGameNetworkingSockets.so') and !Exists('$(NativeArtifactsDir)android-x64\libGameNetworkingSockets.so')" />
   </Target>
 
 </Project>

@@ -39,6 +39,12 @@ jobs:
           - rid: osx-arm64
             runner: macos-14
             script: bash build/build-native-unix.sh osx-arm64
+          - rid: android-arm64
+            runner: ubuntu-22.04
+            script: bash build/build-native-android.sh arm64-v8a
+          - rid: android-x64
+            runner: ubuntu-22.04
+            script: bash build/build-native-android.sh x86_64
 
     steps:
       - name: Checkout (with submodules)
@@ -68,7 +74,7 @@ jobs:
         run: New-Item -ItemType Directory -Force '${{ github.workspace }}/.vcpkg-binary-cache' | Out-Null
 
       - name: Install Linux dependencies
-        if: matrix.rid == 'linux-x64'
+        if: matrix.rid == 'linux-x64' || startsWith(matrix.rid, 'android-')
         run: |
           sudo apt-get update
           sudo apt-get install -y perl
@@ -77,16 +83,17 @@ jobs:
         shell: bash
         env:
           VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_LATEST_HOME }}
         run: ${{ matrix.script }}
 
       - name: Set up .NET (Unix smoke test)
-        if: runner.os != 'Windows'
+        if: matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64'
         uses: actions/setup-dotnet@v4
         with:
           global-json-file: global.json
 
       - name: Run native smoke tests (Unix)
-        if: runner.os != 'Windows'
+        if: matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64'
         shell: bash
         run: |
           set -euo pipefail
