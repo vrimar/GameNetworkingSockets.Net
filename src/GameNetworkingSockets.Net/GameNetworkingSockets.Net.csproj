@@ -23,6 +23,10 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\Shared\ProtoReader.cs" Link="ProtoReader.cs" />
+  </ItemGroup>
+
   <!--
     The Windows build dynamically links to OpenSSL, protobuf, and abseil, and
     stages those DLLs next to GameNetworkingSockets.dll. Unix and Android builds

@@ -73,7 +73,7 @@ public class SmokeTests
     [SkippableFact]
     public void InitializeAndDeinitialize()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed; per-RID smoke job runs this with the lib staged.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed; per-RID smoke job runs this with the lib staged.");
 
         Assert.True(Library.Initialize(out var error), $"Initialize failed: {error}");
         try
@@ -94,7 +94,7 @@ public class SmokeTests
     [SkippableFact]
     public void AddressSetLocalHostRoundTrip()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         try
@@ -113,7 +113,7 @@ public class SmokeTests
     [SkippableFact]
     public void IdentitySteamIDRoundTrip()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         try
@@ -140,7 +140,7 @@ public class SmokeTests
     [SkippableFact]
     public void IdentityGenericStringRoundTrip()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         try
@@ -159,7 +159,7 @@ public class SmokeTests
     [SkippableFact]
     public void NetworkingUtilsTimestampMonotonic()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         try
@@ -181,9 +181,8 @@ public class SmokeTests
     {
         // Verifies the new binding reaches the native lib and surfaces an error
         // message on failure — i.e. that the SteamNetworkingErrMsg buffer is
-        // wired through. Round-trip with a real keypair is a manual step
-        // (see README: run the bundled certtool offline).
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        // wired through.
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         try
@@ -203,7 +202,7 @@ public class SmokeTests
     [SkippableFact]
     public void AddTrustedRootCARejectsEmptyBlob()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         try
@@ -221,7 +220,7 @@ public class SmokeTests
     [SkippableFact]
     public void P2PListenSocketCanBeCreated()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         try
@@ -241,7 +240,7 @@ public class SmokeTests
     [SkippableFact]
     public unsafe void SendMessagesCanRetainFailedMessagesForRetry()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         Assert.True(Library.Initialize(out _));
         nint message = 0;
@@ -273,13 +272,5 @@ public class SmokeTests
                 NetworkingMessage.Release(message);
             Library.Deinitialize();
         }
-    }
-
-    private static bool NativeLibraryPresent()
-    {
-        var dir = AppContext.BaseDirectory;
-        return File.Exists(Path.Combine(dir, "GameNetworkingSockets.dll"))
-            || File.Exists(Path.Combine(dir, "libGameNetworkingSockets.so"))
-            || File.Exists(Path.Combine(dir, "libGameNetworkingSockets.dylib"));
     }
 }

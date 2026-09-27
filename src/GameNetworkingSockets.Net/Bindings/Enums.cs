@@ -100,6 +100,7 @@ public enum ConfigurationValue
     SendRateMax = 11,
     NagleTime = 12,
     IPAllowWithoutAuth = 23,
+    IPLocalHostAllowWithoutAuth = 52,
     MTUPacketSize = 32,
     MTUDataSize = 33,
     Unencrypted = 34,

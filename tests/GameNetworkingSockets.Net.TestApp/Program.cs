@@ -1,53 +1,30 @@
-using System.Diagnostics;
-using System.Runtime.InteropServices;
+using System.Net;
+using System.Net.Sockets;
 using System.Text;
-using System.Text.Json;
-using System.Text.RegularExpressions;
 using Valve.Sockets;
-
-// Minimal client/server demo over GameNetworkingSockets with a runtime-minted
-// trust chain (CA -> server cert). Run the server first; it mints the certs
-// into ./certs/, then the client reads ca.cert.txt from the same directory.
-//
-//   testapp server [port]            # default 27015
-//   testapp client [host:port]       # default 127.0.0.1:27015
-//
-// Note on cert *rejection*: this demo only exercises the happy path. Making
-// the open-source build reject a peer with an untrusted cert is harder than
-// it looks:
-//   * Server-side strict auth (IP_AllowWithoutAuth=0) is gated behind the
-//     STEAMNETWORKINGSOCKETS_CAN_REQUEST_CERT macro (undefined in our build),
-//     so CreateListenSocket errors with "No cert authority, must set
-//     IP_AllowWithoutAuth".
-//   * Client-side strict auth refuses any ConnectOK whose cert has no
-//     identity_string (steamnetworkingsockets_udp.cpp ~L1620, "Unauthenticated
-//     connections not allowed"), and the bundled certtool's `create_cert`
-//     doesn't expose --identity. So even a perfectly CA-signed cert is
-//     rejected.
-// Demonstrating cert rejection needs either a certtool extension or a
-// native helper that mints identity-bound certs.
 
 return args.Length == 0
     ? Usage()
     : args[0].ToLowerInvariant() switch
     {
-        "server" => RunServer(args.Length > 1 ? ushort.Parse(args[1]) : (ushort)27015),
-        "client" => RunClient(args.Length > 1 ? args[1] : "127.0.0.1:27015"),
+        "server" => RunServer(args.Length > 1 ? ushort.Parse(args[1]) : (ushort)27015, CertDir(args, 2)),
+        "client" => RunClient(args.Length > 1 ? args[1] : "127.0.0.1:27015", CertDir(args, 2)),
         _ => Usage(),
     };
 
 static int Usage()
 {
-    Console.Error.WriteLine("Usage: testapp server [port]");
-    Console.Error.WriteLine("       testapp client [host:port]");
+    Console.Error.WriteLine("Usage: testapp server [port] [certs-dir]");
+    Console.Error.WriteLine("       testapp client [host:port] [certs-dir]");
     return 1;
 }
 
-static string CertDir() => Path.Combine(AppContext.BaseDirectory, "certs");
+static string CertDir(string[] args, int index) =>
+    args.Length > index ? args[index] : Path.Combine(AppContext.BaseDirectory, "certs");
 
-static int RunServer(ushort port)
+static int RunServer(ushort port, string certDir)
 {
-    var bundle = EnsureCerts();
+    var (root, certificate) = MintServerCertificate(certDir);
 
     if (!Library.Initialize(out var initErr))
     {
@@ -60,20 +37,16 @@ static int RunServer(ushort port)
         using var utils = new NetworkingUtils();
         utils.SetDebugCallback(DebugType.Important, (t, m) => Console.WriteLine($"[gns:{t}] {m}"));
 
-        // Install our cert + private key so the server has a verifiable identity.
-        // SetCertificateAndPrivateKey wipes the private-key buffer, so pass a copy.
-        var serverCertBytes = Encoding.ASCII.GetBytes(bundle.ServerCertPem);
-        var serverPrivBytes = Encoding.ASCII.GetBytes(bundle.ServerPrivPem);
-        if (!sockets.SetCertificateAndPrivateKey(serverCertBytes, serverPrivBytes, out var certErr))
+        // Before SetCertificate, which cannot read a certificate whose root it does not trust.
+        if (!sockets.AddTrustedRootCA(root, out var caErr))
         {
-            Console.Error.WriteLine($"SetCertificateAndPrivateKey failed: {certErr}");
+            Console.Error.WriteLine($"AddTrustedRootCA failed: {caErr}");
             return 1;
         }
 
-        // Trust our own CA so the server can verify its own cert chain at startup.
-        if (!sockets.AddTrustedRootCA(bundle.CaCertBase64, out var caErr))
+        if (!sockets.SetCertificate(certificate, out var certErr))
         {
-            Console.Error.WriteLine($"AddTrustedRootCA failed: {caErr}");
+            Console.Error.WriteLine($"SetCertificate failed: {certErr}");
             return 1;
         }
 
@@ -107,17 +80,16 @@ static int RunServer(ushort port)
             }
         });
 
-        var bind = default(Address);
-        bind.port = port;
-
-        var listen = sockets.CreateListenSocket(ref bind);
+        var listen = Listen(sockets, port);
         if (listen == 0)
         {
             Console.Error.WriteLine("[server] CreateListenSocket failed.");
             return 1;
         }
 
-        Console.WriteLine($"[server] listening on port {port}. Press Ctrl-C to stop.");
+        var bound = default(Address);
+        sockets.GetListenSocketAddress(listen, ref bound);
+        Console.WriteLine($"[server] listening on port {bound.port}. Press Ctrl-C to stop.");
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
@@ -149,15 +121,15 @@ static int RunServer(ushort port)
     return 0;
 }
 
-static int RunClient(string endpoint)
+static int RunClient(string endpoint, string certDir)
 {
-    var caPath = Path.Combine(CertDir(), "ca.cert.txt");
-    if (!File.Exists(caPath))
+    var rootPath = Path.Combine(certDir, "root.txt");
+    if (!File.Exists(rootPath))
     {
-        Console.Error.WriteLine($"Missing CA cert at {caPath}. Start the server first to mint it.");
+        Console.Error.WriteLine($"Missing root certificate at {rootPath}. Start the server first to mint it.");
         return 1;
     }
-    var caCertBase64 = File.ReadAllText(caPath).Trim();
+    var root = File.ReadAllText(rootPath).Trim();
 
     var (host, port) = ParseEndpoint(endpoint);
 
@@ -172,7 +144,7 @@ static int RunClient(string endpoint)
         using var utils = new NetworkingUtils();
         utils.SetDebugCallback(DebugType.Important, (t, m) => Console.WriteLine($"[gns:{t}] {m}"));
 
-        if (!sockets.AddTrustedRootCA(caCertBase64, out var caErr))
+        if (!sockets.AddTrustedRootCA(root, out var caErr))
         {
             Console.Error.WriteLine($"AddTrustedRootCA failed: {caErr}");
             return 1;
@@ -188,7 +160,11 @@ static int RunClient(string endpoint)
         var addr = default(Address);
         addr.SetAddress(host, port);
 
-        var conn = sockets.Connect(ref addr);
+        var conn = sockets.Connect(ref addr,
+        [
+            Configuration.Int32(ConfigurationValue.IPAllowWithoutAuth, 0),
+            Configuration.Int32(ConfigurationValue.IPLocalHostAllowWithoutAuth, 0),
+        ]);
         if (conn == 0)
         {
             Console.Error.WriteLine("[client] Connect failed.");
@@ -264,108 +240,45 @@ static (string host, ushort port) ParseEndpoint(string ep)
     return (ep[..idx], ushort.Parse(ep[(idx + 1)..]));
 }
 
-// -----------------------------------------------------------------
-// Cert minting via the bundled steamnetworkingsockets_certtool.
-// -----------------------------------------------------------------
-
-static CertBundle EnsureCerts()
+static uint Listen(NetworkingSockets sockets, ushort port)
 {
-    var dir = CertDir();
+    for (var attempt = 0; attempt < 5; attempt++)
+    {
+        var bind = default(Address);
+        bind.port = port == 0 ? FreeUdpPort() : port;
+        var listen = sockets.CreateListenSocket(ref bind);
+        if (listen != 0 || port != 0)
+            return listen;
+    }
+
+    return 0;
+}
+
+// GameNetworkingSockets refuses to listen on port 0, so ask the OS for a free one.
+static ushort FreeUdpPort()
+{
+    using var probe = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+    probe.Bind(new IPEndPoint(IPAddress.Any, 0));
+    return (ushort)((IPEndPoint)probe.LocalEndPoint!).Port;
+}
+
+static (string Root, byte[] Certificate) MintServerCertificate(string dir)
+{
     Directory.CreateDirectory(dir);
+    var authorityPath = Path.Combine(dir, "authority.bin");
+    var now = DateTimeOffset.UtcNow;
 
-    var caCertPath = Path.Combine(dir, "ca.cert.txt");
-    var serverCertPath = Path.Combine(dir, "server.cert.pem");
-    var serverPrivPath = Path.Combine(dir, "server.priv.pem");
+    var minted = !File.Exists(authorityPath);
+    using var authority = minted
+        ? NetworkingCertificateAuthority.Create(now, TimeSpan.FromDays(3650))
+        : NetworkingCertificateAuthority.Import(File.ReadAllBytes(authorityPath));
 
-    if (File.Exists(caCertPath) && File.Exists(serverCertPath) && File.Exists(serverPrivPath))
+    if (minted)
     {
-        Console.WriteLine($"[server] reusing existing certs under {dir}");
-        return new CertBundle(
-            File.ReadAllText(caCertPath).Trim(),
-            File.ReadAllText(serverCertPath),
-            File.ReadAllText(serverPrivPath));
+        File.WriteAllBytes(authorityPath, authority.Export());
+        Console.WriteLine($"[server] minted a new authority under {dir}; authority.bin is its secret key");
     }
 
-    Console.WriteLine($"[server] minting fresh CA + server cert under {dir}");
-    var certtool = LocateCerttool();
-
-    var ca = RunCerttool(certtool, "gen_keypair");
-    var caPub = ca.GetProperty("public_key").GetString()!;
-    var caPriv = ca.GetProperty("private_key").GetString()!;
-
-    var caCert = RunCerttool(certtool, "--ca-priv-key", Whitespace(caPriv), "--pub-key", caPub, "create_cert");
-    var caCertBase64 = caCert.GetProperty("cert").GetString()!;
-
-    var srv = RunCerttool(certtool, "gen_keypair");
-    var srvPub = srv.GetProperty("public_key").GetString()!;
-    var srvPriv = srv.GetProperty("private_key").GetString()!;
-
-    var srvCert = RunCerttool(certtool, "--ca-priv-key", Whitespace(caPriv), "--pub-key", srvPub, "create_cert");
-    var srvCertBase64 = srvCert.GetProperty("cert").GetString()!;
-
-    // SetCertificateAndPrivateKey parses STEAMDATAGRAM-CERT-wrapped PEM;
-    // AddTrustedRootCA takes the bare base64 body.
-    var serverCertPem = $"-----BEGIN STEAMDATAGRAM CERT-----\n{srvCertBase64}\n-----END STEAMDATAGRAM CERT-----\n";
-
-    File.WriteAllText(caCertPath, caCertBase64);
-    File.WriteAllText(serverCertPath, serverCertPem);
-    File.WriteAllText(serverPrivPath, srvPriv);
-
-    // Also drop the CA priv key beside the rest in case the user wants to mint
-    // additional server certs later. Treat the file as a secret.
-    File.WriteAllText(Path.Combine(dir, "ca.priv.pem"), caPriv);
-
-    return new CertBundle(caCertBase64, serverCertPem, srvPriv);
+    File.WriteAllText(Path.Combine(dir, "root.txt"), authority.RootCertificate);
+    return (authority.RootCertificate, authority.Issue("str:testapp-server", now, TimeSpan.FromDays(1)));
 }
-
-static string Whitespace(string s) => Regex.Replace(s, @"\s+", " ");
-
-static JsonElement RunCerttool(string certtool, params string[] args)
-{
-    var psi = new ProcessStartInfo(certtool)
-    {
-        RedirectStandardOutput = true,
-        RedirectStandardError = true,
-        UseShellExecute = false,
-        CreateNoWindow = true,
-    };
-    psi.ArgumentList.Add("--output-json");
-    foreach (var a in args) psi.ArgumentList.Add(a);
-
-    using var p = Process.Start(psi) ?? throw new InvalidOperationException($"Failed to start {certtool}.");
-    var stdout = p.StandardOutput.ReadToEnd();
-    var stderr = p.StandardError.ReadToEnd();
-    p.WaitForExit();
-    if (p.ExitCode != 0)
-        throw new InvalidOperationException($"certtool exited {p.ExitCode}: {stderr}");
-    return JsonDocument.Parse(stdout).RootElement.Clone();
-}
-
-static string LocateCerttool()
-{
-    var exe = OperatingSystem.IsWindows()
-        ? "steamnetworkingsockets_certtool.exe"
-        : "steamnetworkingsockets_certtool";
-
-    var beside = Path.Combine(AppContext.BaseDirectory, exe);
-    if (File.Exists(beside)) return beside;
-
-    // Dev fallback: walk up to the repo root and look in artifacts/native/<rid>/.
-    var rid = RuntimeInformation.RuntimeIdentifier;
-    var rids = new[] { rid, "win-x64", "linux-x64", "osx-x64" };
-    var dir = new DirectoryInfo(AppContext.BaseDirectory);
-    while (dir is not null)
-    {
-        foreach (var r in rids)
-        {
-            var candidate = Path.Combine(dir.FullName, "artifacts", "native", r, exe);
-            if (File.Exists(candidate)) return candidate;
-        }
-        dir = dir.Parent;
-    }
-
-    throw new FileNotFoundException(
-        $"Could not locate {exe}. Build the natives (build/build-native-{(OperatingSystem.IsWindows() ? "win.ps1" : "unix.sh")}) first.");
-}
-
-record CertBundle(string CaCertBase64, string ServerCertPem, string ServerPrivPem);

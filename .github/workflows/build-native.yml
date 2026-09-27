@@ -2,17 +2,32 @@ name: build-native
 
 on:
   workflow_call:
+    inputs:
+      fresh:
+        description: 'Build every native library from scratch instead of restoring a cached build'
+        type: boolean
+        default: false
   workflow_dispatch:
   pull_request:
     paths:
       - 'external/GameNetworkingSockets/**'
       - 'build/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
       - '.github/workflows/build-native.yml'
   push:
     branches: [main]
     paths:
       - 'external/GameNetworkingSockets/**'
       - 'build/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - 'global.json'
       - '.github/workflows/build-native.yml'
 
 permissions:
@@ -52,15 +67,29 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Identify the native sources
+        id: sources
+        shell: bash
+        run: echo "revision=$(git rev-parse HEAD:external/GameNetworkingSockets)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the native build
+        id: native
+        if: ${{ !inputs.fresh }}
+        uses: actions/cache@v4
+        with:
+          path: artifacts/native/${{ matrix.rid }}/
+          key: gns-native-${{ matrix.rid }}-${{ steps.sources.outputs.revision }}-${{ hashFiles('build/**', '.github/workflows/build-native.yml') }}
+
       - name: Set up CMake
+        if: steps.native.outputs.cache-hit != 'true'
         uses: lukka/get-cmake@latest
 
       - name: Set up MSVC (Windows)
-        if: matrix.rid == 'win-x64'
+        if: matrix.rid == 'win-x64' && steps.native.outputs.cache-hit != 'true'
         uses: microsoft/setup-msbuild@v2
 
       - name: Restore vcpkg binary cache (Windows)
-        if: matrix.rid == 'win-x64'
+        if: matrix.rid == 'win-x64' && steps.native.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
@@ -69,17 +98,18 @@ jobs:
             vcpkg-${{ runner.os }}-
 
       - name: Prepare vcpkg binary cache (Windows)
-        if: matrix.rid == 'win-x64'
+        if: matrix.rid == 'win-x64' && steps.native.outputs.cache-hit != 'true'
         shell: pwsh
         run: New-Item -ItemType Directory -Force '${{ github.workspace }}/.vcpkg-binary-cache' | Out-Null
 
       - name: Install Linux dependencies
-        if: matrix.rid == 'linux-x64' || startsWith(matrix.rid, 'android-')
+        if: (matrix.rid == 'linux-x64' || startsWith(matrix.rid, 'android-')) && steps.native.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y perl
 
       - name: Build native library (${{ matrix.rid }})
+        if: steps.native.outputs.cache-hit != 'true'
         shell: bash
         env:
           VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/.vcpkg-binary-cache,readwrite

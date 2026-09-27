@@ -40,7 +40,7 @@ public class CustomMemoryAllocatorTests
     [SkippableFact]
     public void SetCustomMemoryAllocator_StoresFunctionPointers()
     {
-        Skip.IfNot(NativeLibraryPresent(), "GameNetworkingSockets native library not deployed.");
+        Skip.IfNot(Native.Present(), "GameNetworkingSockets native library not deployed.");
 
         // The actual contract validated by this test:
         //  1. The DllImport signature accepts our delegate types without throwing.
@@ -78,13 +78,5 @@ public class CustomMemoryAllocatorTests
         {
             Library.Deinitialize();
         }
-    }
-
-    private static bool NativeLibraryPresent()
-    {
-        var dir = AppContext.BaseDirectory;
-        return File.Exists(Path.Combine(dir, "GameNetworkingSockets.dll"))
-            || File.Exists(Path.Combine(dir, "libGameNetworkingSockets.so"))
-            || File.Exists(Path.Combine(dir, "libGameNetworkingSockets.dylib"));
     }
 }

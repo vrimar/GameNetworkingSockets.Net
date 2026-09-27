@@ -317,9 +317,17 @@ public sealed partial class NetworkingSockets
     /// <c>-----BEGIN-----</c>/<c>-----END-----</c> wrappers). Combine with a native
     /// build that defines <c>STEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS</c>
     /// so your CA replaces Valve's as the trust anchor for non-Steam deployments.
+    /// A blob that carries a private key is refused: that is the authority itself,
+    /// and trusting it would ship the key to every peer.
     /// </summary>
     public unsafe bool AddTrustedRootCA(string base64Cert, out string errorMessage)
     {
+        if (TrustedRoot.CarriesPrivateKey(base64Cert))
+        {
+            errorMessage = "The certificate carries its private key. Trust the public root instead, and keep the authority offline.";
+            return false;
+        }
+
         byte* errBuf = stackalloc byte[Library.MaxErrorMessageLength];
         bool ok = SteamAPI_ISteamNetworkingSockets_AddTrustedRootCA(_nativeSockets, base64Cert, errBuf);
         errorMessage = ok ? string.Empty : Marshal.PtrToStringUTF8((nint)errBuf) ?? string.Empty;
@@ -344,7 +352,13 @@ public sealed partial class NetworkingSockets
         return ok;
     }
 
-    /// <summary>Installs a certificate previously obtained by signing the request from <see cref="GetCertificateRequest"/>.</summary>
+    /// <summary>
+    /// Installs a signed certificate as this process's identity. Pass either one that carries its own
+    /// private key, such as <c>NetworkingCertificateAuthority.Issue</c> returns, or one signed from the
+    /// request <see cref="GetCertificateRequest"/> built, never both: that request generates a private key,
+    /// and a certificate carrying a different one is then refused. The certificate's root must already be
+    /// trusted through <see cref="AddTrustedRootCA"/>. An expired certificate installs, and only peers refuse it.
+    /// </summary>
     public unsafe bool SetCertificate(ReadOnlySpan<byte> certificate, out string errorMessage)
     {
         byte* errBuf = stackalloc byte[Library.MaxErrorMessageLength];

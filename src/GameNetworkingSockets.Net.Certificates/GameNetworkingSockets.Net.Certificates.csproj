@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Valve.Sockets</RootNamespace>
+    <AssemblyName>GameNetworkingSockets.Net.Certificates</AssemblyName>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>GameNetworkingSockets.Net.Certificates</PackageId>
+    <Description>Mints and reads GameNetworkingSockets certificates in managed code: a root authority, identity-bound certificates signed by it, and the public root that peers pass to AddTrustedRootCA. Needs no native GameNetworkingSockets binary.</Description>
+    <PackageTags>gamenetworkingsockets;valve;steam;networking;certificate;ed25519</PackageTags>
+
+    <IsAotCompatible>true</IsAotCompatible>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NSec.Cryptography" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Shared\ProtoReader.cs" Link="ProtoReader.cs" />
+  </ItemGroup>
+
+</Project>

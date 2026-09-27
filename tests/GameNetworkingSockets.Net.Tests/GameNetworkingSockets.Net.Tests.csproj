@@ -17,6 +17,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\GameNetworkingSockets.Net\GameNetworkingSockets.Net.csproj" />
+    <ProjectReference Include="..\..\src\GameNetworkingSockets.Net.Certificates\GameNetworkingSockets.Net.Certificates.csproj" />
+    <ProjectReference Include="..\GameNetworkingSockets.Net.TestApp\GameNetworkingSockets.Net.TestApp.csproj" />
   </ItemGroup>
 
 </Project>

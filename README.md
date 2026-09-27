@@ -9,6 +9,7 @@ The managed surface is derived from Stanislav Denisov's [ValveSockets-CSharp](ht
 | Package | Contents |
 |---|---|
 | `GameNetworkingSockets.Net` | Managed bindings (`net8.0`/`net10.0`) plus `GameNetworkingSockets.dll` / `libGameNetworkingSockets.so` / `libGameNetworkingSockets.dylib` under `runtimes/{rid}/native/` (desktop + Android). AOT-compatible. |
+| `GameNetworkingSockets.Net.Certificates` | Managed minting and reading of certificates: a root authority, the identity-bound certificates it signs, and the public root peers trust (`net10.0`). Needs no native GameNetworkingSockets binary; Ed25519 comes from NSec. |
 
 ## Quick start
 
@@ -40,38 +41,50 @@ Library.Deinitialize();
 
 ## Identity & authentication
 
-`GameNetworkingSockets.Net` ships with the **dynamic self-signed cert** build flag (`STEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS`) enabled, so Valve's hardcoded root CA is not installed. Consumers running outside the Steam ecosystem provide their own trust anchor.
+`GameNetworkingSockets.Net` builds GameNetworkingSockets with `STEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS`, so Valve's hardcoded root CA is not installed: outside Steam you bring your own root.
 
-Two API entry points support this:
+Out of the box the open-source build authenticates nothing. `IPAllowWithoutAuth` and `IPLocalHostAllowWithoutAuth` both default to 2, so a client accepts whatever server answers. To require a server signed by your root:
 
-- `NetworkingSockets.SetCertificateAndPrivateKey(cert, key, out err)` — installs a long-lived keypair (e.g. one minted by the certtool below). Server processes call this to take on a durable cryptographic identity.
-- `NetworkingSockets.AddTrustedRootCA(base64Cert, out err)` — registers a CA whose-signed certs will be accepted from peers during the handshake. Clients call this at startup so they can verify the server's identity.
+1. Mint a root authority once, offline, with `GameNetworkingSockets.Net.Certificates`, and issue each server a certificate from it. No native binary is involved.
 
-### Offline cert tooling
+   ```csharp
+   using Valve.Sockets;
 
-The package ships `steamnetworkingsockets_certtool` under `tools/{rid}/` for build-time use. Resolve it from a `PackageReference`:
+   var now = DateTimeOffset.UtcNow;
+   using var authority = NetworkingCertificateAuthority.Create(now, TimeSpan.FromDays(3650));
+   File.WriteAllBytes("authority.bin", authority.Export()); // secret, keep offline
+   string root = authority.RootCertificate; // public, ship it in the client
+   byte[] server = authority.Issue("str:game-1", now, TimeSpan.FromDays(365)); // secret, deploy to that server
+   ```
 
-```xml
-<PackageReference Include="GameNetworkingSockets.Net" Version="X.Y.Z" GeneratePathProperty="true" />
-```
+   Later, `NetworkingCertificateAuthority.Import(File.ReadAllBytes("authority.bin"))` loads it to issue more. An identity is `str:` and 1 to 31 bytes, or `gen:` and 2 to 64 hex digits.
 
-Then invoke it during your build:
+2. On the server, trust the root and take the certificate before opening listen sockets:
 
-```
-$(PkgGameNetworkingSockets_Net)/tools/win-x64/steamnetworkingsockets_certtool.exe gen_keypair
-```
+   ```csharp
+   sockets.AddTrustedRootCA(root, out var error);
+   sockets.SetCertificate(server, out error);
+   ```
 
-Typical mint flow (run once, commit `ca.pub` to source control; keep `ca.priv` secret):
+3. On the client, trust the root and dial with authentication required:
 
-```bash
-# Generate a CA keypair (writes the priv key to stdout).
-$tool gen_keypair > ca.priv
+   ```csharp
+   sockets.AddTrustedRootCA(root, out var error);
+   var connection = sockets.Connect(ref address, [Configuration.Int32(ConfigurationValue.IPAllowWithoutAuth, 0)]);
+   ```
 
-# Mint a server cert signed by that CA.
-$tool create_cert --ca-priv-key-file ca.priv --pub-key-file server.pub --expiry 730 > server.cert
-```
+What GameNetworkingSockets checks, and what it lets through:
 
-Load the resulting blobs from your app at runtime — no Valve infrastructure required.
+- A root carries no identity. Identity-bound certificates are kept out of the trust store, which is why an authority names none and `Import` refuses a certificate that does.
+- A root carries no private key either. `AddTrustedRootCA` accepts the authority itself and ignores its key, so the binding refuses any blob that carries one rather than let the key ship in a client.
+- An identity-bound certificate must list the app id its peers run as. The open-source build runs as app 0, the default of `Issue`.
+- A process must trust the root of its own certificate, or `SetCertificate` cannot read the certificate and fails.
+- `SetCertificate` installs an expired certificate and only peers refuse it, so check `NetworkingCertificate.Read(certificate).Expiry` at startup.
+- Expiries end at 2038-01-19 03:14:07 UTC: GameNetworkingSockets on Windows reads a later one as already passed, so the minter refuses it.
+- Loopback stays exempt: a peer on the same machine connects unauthenticated unless the client also sets `IPLocalHostAllowWithoutAuth` to 0.
+- A process holds one certificate, so every socket in it presents the same identity.
+
+The package also ships Valve's `steamnetworkingsockets_certtool` under `tools/{rid}/`, whose PEM output `NetworkingSockets.SetCertificateAndPrivateKey` takes. It cannot bind a certificate to an identity, so it does not cover server authentication.
 
 ## Runtime dependencies
 
@@ -140,6 +153,8 @@ dotnet build GameNetworkingSockets.Net.sln -p:SkipNativeWarning=true
 external/GameNetworkingSockets/    # git submodule, pinned to a specific upstream SHA
 build/                             # CMakeLists.txt, vcpkg manifest, per-platform build scripts
 src/GameNetworkingSockets.Net/     # managed wrapper library (multi-targets net8.0;net10.0)
+src/GameNetworkingSockets.Net.Certificates/  # managed certificate minting (net10.0)
+src/Shared/                        # source compiled into both packages
 tests/                             # xunit smoke tests + AOT sample
 artifacts/native/                  # staging for native binaries before packing
 .github/workflows/                 # ci-pr, build-native, package
