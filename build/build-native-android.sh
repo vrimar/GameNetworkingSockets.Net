@@ -27,11 +27,12 @@ PROTOBUF_VERSION="21.12"
 PROTOBUF_ARCHIVE="protobuf-all-$PROTOBUF_VERSION.tar.gz"
 PROTOBUF_URL="https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOBUF_VERSION/$PROTOBUF_ARCHIVE"
 PROTOBUF_SHA256="2c6a36c7b5a55accae063667ef3c55f2642e67476d96d355ff0acb13dbb47f09"
+PROTOBUF_BUILD_REVISION="2"
 OPENSSL_VERSION="3.5.7"
 OPENSSL_ARCHIVE="openssl-$OPENSSL_VERSION.tar.gz"
 OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/$OPENSSL_ARCHIVE"
 OPENSSL_SHA256="a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8"
-OPENSSL_BUILD_REVISION="2"
+OPENSSL_BUILD_REVISION="3"
 
 case "$ABI" in
     arm64-v8a)
@@ -56,6 +57,8 @@ if [ -z "$NDK" ] || [ ! -f "$NDK/build/cmake/android.toolchain.cmake" ]; then
     exit 1
 fi
 TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
+# __FILE__ and debug info name sources relative to the repo and NDK, so no build-machine path ships.
+PREFIX_MAP_FLAGS="-ffile-prefix-map=$REPO/= -ffile-prefix-map=$NDK/=ndk/"
 
 # Locate the NDK host LLVM toolchain (for OpenSSL's compiler-driver build and
 # for the symbol-inspection tools below).
@@ -94,7 +97,8 @@ PROTOBUF_SOURCE_DIR="$DEPS_DIR/protobuf-$PROTOBUF_VERSION"
 PROTOBUF_BUILD_DIR="$DEPS_DIR/protobuf-build"
 PROTOBUF_PREFIX="$DEPS_DIR/protobuf-prefix"
 OPENSSL_SOURCE_DIR="$DEPS_DIR/openssl-$OPENSSL_VERSION"
-OPENSSL_PREFIX="$DEPS_DIR/openssl-prefix"
+OPENSSL_STAGE="$DEPS_DIR/openssl-stage"
+OPENSSL_PREFIX="$OPENSSL_STAGE/usr/local"
 BUILD_DIR="$REPO/build/build-$RID"
 mkdir -p "$DOWNLOAD_DIR"
 
@@ -158,7 +162,9 @@ build_host_protoc() {
 
 # Target protobuf: static PIC lib cross-compiled for the Android ABI.
 build_target_protobuf() {
-    if [ -f "$PROTOBUF_PREFIX/lib/libprotobuf.a" ]; then
+    local marker="$PROTOBUF_PREFIX/.gns-static-build-$PROTOBUF_BUILD_REVISION"
+
+    if [ -f "$marker" ] && [ -f "$PROTOBUF_PREFIX/lib/libprotobuf.a" ]; then
         echo "[build-native-android] Reusing cached target protobuf $PROTOBUF_VERSION ($ABI)."
         return
     fi
@@ -180,6 +186,8 @@ build_target_protobuf() {
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DCMAKE_INSTALL_PREFIX="$PROTOBUF_PREFIX" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        "-DCMAKE_C_FLAGS=$PREFIX_MAP_FLAGS" \
+        "-DCMAKE_CXX_FLAGS=$PREFIX_MAP_FLAGS" \
         -Dprotobuf_BUILD_SHARED_LIBS=OFF \
         -Dprotobuf_BUILD_TESTS=OFF \
         -Dprotobuf_BUILD_EXAMPLES=OFF \
@@ -190,6 +198,7 @@ build_target_protobuf() {
     cmake --install "$PROTOBUF_BUILD_DIR"
 
     test -f "$PROTOBUF_PREFIX/lib/libprotobuf.a"
+    touch "$marker"
 }
 
 build_target_openssl() {
@@ -209,7 +218,7 @@ build_target_openssl() {
     fi
     verify_sha256 "$archive" "$OPENSSL_SHA256"
 
-    rm -rf "$OPENSSL_SOURCE_DIR" "$OPENSSL_PREFIX"
+    rm -rf "$OPENSSL_SOURCE_DIR" "$OPENSSL_STAGE" "$DEPS_DIR/openssl-prefix"
     tar -xzf "$archive" -C "$DEPS_DIR"
 
     echo "[build-native-android] Building OpenSSL $OPENSSL_VERSION as static PIC ($ABI)."
@@ -219,6 +228,7 @@ build_target_openssl() {
         # clang wrappers on PATH.
         export ANDROID_NDK_ROOT="$NDK"
         export PATH="$LLVM_BIN:$PATH"
+        # The stock dirs are compiled in but never read: no config autoload, every provider built in.
         ./Configure "$OPENSSL_TARGET" \
             "-D__ANDROID_API__=$ANDROID_API" \
             no-shared \
@@ -227,12 +237,14 @@ build_target_openssl() {
             no-apps \
             no-module \
             no-zlib \
-            --prefix="$OPENSSL_PREFIX" \
+            no-autoload-config \
+            --prefix=/usr/local \
+            --openssldir=/usr/local/ssl \
             --libdir=lib \
             -fPIC \
             -fvisibility=hidden
         make -s -j"$NPROC"
-        make -s install_sw
+        make -s install_sw DESTDIR="$OPENSSL_STAGE"
     )
 
     test -f "$OPENSSL_PREFIX/lib/libcrypto.a"
@@ -290,7 +302,8 @@ cmake -S "$GNS" -B "$BUILD_DIR" \
     -DUSE_CRYPTO25519=OpenSSL \
     -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DENABLE_ICE=OFF \
-    -DCMAKE_CXX_FLAGS="-DSTEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE -DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
+    "-DCMAKE_C_FLAGS=$PREFIX_MAP_FLAGS" \
+    -DCMAKE_CXX_FLAGS="$PREFIX_MAP_FLAGS -DSTEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE -DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
     "${PROTOBUF_CMAKE_ARGS[@]}" \
     "${OPENSSL_CMAKE_ARGS[@]}"
 
@@ -336,6 +349,14 @@ if grep -Eqi 'protobuf|libcrypto|libssl|libc\+\+_shared' <<<"$NEEDED"; then
     echo "$NEEDED" >&2
     exit 1
 fi
+
+for root in "$REPO" "$NDK"; do
+    if LC_ALL=C grep -aqF "$root" "$SO"; then
+        echo "$SO embeds the build path $root:" >&2
+        strings -a "$SO" | grep -F "$root" | head -10 >&2 || true
+        exit 1
+    fi
+done
 
 echo "[build-native-android] symbol check OK - $RID artifacts staged."
 ls -la "$NATIVE_OUT"

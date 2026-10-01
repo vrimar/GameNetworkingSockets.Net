@@ -26,11 +26,14 @@ PROTOBUF_VERSION="21.12"
 PROTOBUF_ARCHIVE="protobuf-all-$PROTOBUF_VERSION.tar.gz"
 PROTOBUF_URL="https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOBUF_VERSION/$PROTOBUF_ARCHIVE"
 PROTOBUF_SHA256="2c6a36c7b5a55accae063667ef3c55f2642e67476d96d355ff0acb13dbb47f09"
+PROTOBUF_BUILD_REVISION="2"
 OPENSSL_VERSION="3.5.7"
 OPENSSL_ARCHIVE="openssl-$OPENSSL_VERSION.tar.gz"
 OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-$OPENSSL_VERSION/$OPENSSL_ARCHIVE"
 OPENSSL_SHA256="a8c0d28a529ca480f9f36cf5792e2cd21984552a3c8e4aa11a24aa31aeac98e8"
-OPENSSL_BUILD_REVISION="2"
+OPENSSL_BUILD_REVISION="3"
+# __FILE__ and debug info name sources relative to the repo, so no build-machine path ships.
+PREFIX_MAP_FLAGS="-ffile-prefix-map=$REPO/="
 
 case "$RID" in
     linux-x64)
@@ -70,7 +73,8 @@ PROTOBUF_SOURCE_DIR="$DEPS_DIR/protobuf-$PROTOBUF_VERSION"
 PROTOBUF_BUILD_DIR="$DEPS_DIR/protobuf-build"
 PROTOBUF_PREFIX="$DEPS_DIR/protobuf-prefix"
 OPENSSL_SOURCE_DIR="$DEPS_DIR/openssl-$OPENSSL_VERSION"
-OPENSSL_PREFIX="$DEPS_DIR/openssl-prefix"
+OPENSSL_STAGE="$DEPS_DIR/openssl-stage"
+OPENSSL_PREFIX="$OPENSSL_STAGE/usr/local"
 BUILD_DIR="$REPO/build/build-$RID"
 mkdir -p "$DOWNLOAD_DIR"
 
@@ -95,8 +99,11 @@ verify_sha256() {
 
 build_static_protobuf() {
     local archive="$DOWNLOAD_DIR/$PROTOBUF_ARCHIVE"
+    local marker="$PROTOBUF_PREFIX/.gns-static-build-$PROTOBUF_BUILD_REVISION"
 
-    if [ -f "$PROTOBUF_PREFIX/lib/libprotobuf.a" ] && [ -x "$PROTOBUF_PREFIX/bin/protoc" ]; then
+    if [ -f "$marker" ] &&
+        [ -f "$PROTOBUF_PREFIX/lib/libprotobuf.a" ] &&
+        [ -x "$PROTOBUF_PREFIX/bin/protoc" ]; then
         echo "[build-native-unix] Reusing cached protobuf $PROTOBUF_VERSION."
         return
     fi
@@ -119,6 +126,8 @@ build_static_protobuf() {
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
         -DCMAKE_INSTALL_PREFIX="$PROTOBUF_PREFIX" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        "-DCMAKE_C_FLAGS=$PREFIX_MAP_FLAGS" \
+        "-DCMAKE_CXX_FLAGS=$PREFIX_MAP_FLAGS" \
         -Dprotobuf_BUILD_SHARED_LIBS=OFF \
         -Dprotobuf_BUILD_TESTS=OFF \
         -Dprotobuf_BUILD_EXAMPLES=OFF \
@@ -131,6 +140,7 @@ build_static_protobuf() {
 
     test -f "$PROTOBUF_PREFIX/lib/libprotobuf.a"
     test -x "$PROTOBUF_PREFIX/bin/protoc"
+    touch "$marker"
 }
 
 build_static_openssl() {
@@ -150,12 +160,13 @@ build_static_openssl() {
     fi
     verify_sha256 "$archive" "$OPENSSL_SHA256"
 
-    rm -rf "$OPENSSL_SOURCE_DIR" "$OPENSSL_PREFIX"
+    rm -rf "$OPENSSL_SOURCE_DIR" "$OPENSSL_STAGE" "$DEPS_DIR/openssl-prefix"
     tar -xzf "$archive" -C "$DEPS_DIR"
 
     echo "[build-native-unix] Building OpenSSL $OPENSSL_VERSION as static PIC."
     (
         cd "$OPENSSL_SOURCE_DIR"
+        # The stock dirs are compiled in but never read: no config autoload, every provider built in.
         ./Configure "$OPENSSL_TARGET" \
             no-shared \
             no-tests \
@@ -163,12 +174,14 @@ build_static_openssl() {
             no-apps \
             no-module \
             no-zlib \
-            --prefix="$OPENSSL_PREFIX" \
+            no-autoload-config \
+            --prefix=/usr/local \
+            --openssldir=/usr/local/ssl \
             --libdir=lib \
             -fPIC \
             -fvisibility=hidden
         make -s -j"$NPROC"
-        make -s install_sw
+        make -s install_sw DESTDIR="$OPENSSL_STAGE"
     )
 
     test -f "$OPENSSL_PREFIX/lib/libcrypto.a"
@@ -217,7 +230,8 @@ cmake -S "$GNS" -B "$BUILD_DIR" \
     -DUSE_CRYPTO25519=OpenSSL \
     -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DENABLE_ICE=OFF \
-    -DCMAKE_CXX_FLAGS="-DSTEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE -DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
+    "-DCMAKE_C_FLAGS=$PREFIX_MAP_FLAGS" \
+    -DCMAKE_CXX_FLAGS="$PREFIX_MAP_FLAGS -DSTEAMNETWORKINGSOCKETS_ENABLE_MEM_OVERRIDE -DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
     "${PROTOBUF_CMAKE_ARGS[@]}" \
     "${OPENSSL_CMAKE_ARGS[@]}" \
     "${EXTRA_CMAKE_ARGS[@]}"
@@ -254,7 +268,8 @@ cmake -S "$GNS" -B "$TOOLS_BUILD_DIR" \
     -DUSE_CRYPTO25519=OpenSSL \
     -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DENABLE_ICE=OFF \
-    -DCMAKE_CXX_FLAGS="-DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
+    "-DCMAKE_C_FLAGS=$PREFIX_MAP_FLAGS" \
+    -DCMAKE_CXX_FLAGS="$PREFIX_MAP_FLAGS -DSTEAMNETWORKINGSOCKETS_ALLOW_DYNAMIC_SELFSIGNED_CERTS" \
     "${PROTOBUF_CMAKE_ARGS[@]}" \
     "${OPENSSL_CMAKE_ARGS[@]}" \
     "${EXTRA_CMAKE_ARGS[@]}"
@@ -333,6 +348,15 @@ elif [ "$LIB_EXT" = "dylib" ]; then
         fi
     done
 fi
+
+for binary in "$NATIVE_OUT/libGameNetworkingSockets.$LIB_EXT" "$NATIVE_OUT/steamnetworkingsockets_certtool"; do
+    [ -f "$binary" ] || continue
+    if LC_ALL=C grep -aqF "$REPO" "$binary"; then
+        echo "$binary embeds the build path $REPO:" >&2
+        strings -a "$binary" | grep -F "$REPO" | head -10 >&2 || true
+        exit 1
+    fi
+done
 
 echo "[build-native-unix] symbol check OK - $RID artifacts staged."
 ls -la "$NATIVE_OUT"

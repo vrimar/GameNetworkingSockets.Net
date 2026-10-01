@@ -30,6 +30,10 @@ $repo = Resolve-Path "$PSScriptRoot/.."
 $gns = Join-Path $repo 'external/GameNetworkingSockets'
 $triplets = Join-Path $repo 'build/triplets'
 $targetTriplet = 'x64-windows-release'
+# __FILE__ names sources relative to the repo, and the DLL names its PDB by file name only.
+$repoSlashed = "$repo" -replace '\\', '/'
+$env:CL = "$env:CL /d1trimfile:$repo /d1trimfile:$repoSlashed".Trim()
+$env:LINK = "$env:LINK /PDBALTPATH:%_PDB%".Trim()
 
 if (!(Test-Path (Join-Path $gns 'include/steam/steamnetworkingsockets.h'))) {
     Write-Error "GameNetworkingSockets submodule missing at $gns. Run bootstrap.ps1 first."
@@ -193,6 +197,17 @@ if ($dumpbin) {
 else {
     Write-Warning "dumpbin.exe not in PATH; skipping symbol-export check."
 }
+
+$buildRoots = @("$repo", $repoSlashed, "$VcpkgRoot", ("$VcpkgRoot" -replace '\\', '/')) | Select-Object -Unique
+foreach ($binary in Get-ChildItem $nativeOut -Include '*.dll', '*.exe' -Recurse) {
+    $text = [System.Text.Encoding]::Latin1.GetString([System.IO.File]::ReadAllBytes($binary.FullName))
+    foreach ($root in $buildRoots) {
+        if ($text.IndexOf($root, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            Write-Error "$($binary.Name) embeds the build path $root."
+        }
+    }
+}
+Write-Host "[build-native-win] path check OK: no build paths in the staged binaries."
 
 $global:LASTEXITCODE = 0
 exit 0
