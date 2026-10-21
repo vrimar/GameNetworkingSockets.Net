@@ -107,6 +107,7 @@ public enum ConfigurationValue
     EnumerateDevVars = 35,
     SymmetricConnect = 37,
     LocalVirtualPort = 38,
+    ConnectionUserData = 40,
     ConnectionStatusChanged = 201,
     AuthStatusChanged = 202,
     RelayNetworkStatusChanged = 203,
