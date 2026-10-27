@@ -34,7 +34,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-native-${{ github.ref }}
+  group: build-native-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
