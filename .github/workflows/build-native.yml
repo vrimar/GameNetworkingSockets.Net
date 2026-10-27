@@ -63,7 +63,7 @@ jobs:
 
     steps:
       - name: Checkout (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -75,7 +75,7 @@ jobs:
       - name: Restore the native build
         id: native
         if: ${{ !inputs.fresh }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: artifacts/native/${{ matrix.rid }}/
           key: gns-native-${{ matrix.rid }}-${{ steps.sources.outputs.revision }}-${{ hashFiles('build/**', '.github/workflows/build-native.yml') }}
@@ -86,11 +86,11 @@ jobs:
 
       - name: Set up MSVC (Windows)
         if: matrix.rid == 'win-x64' && steps.native.outputs.cache-hit != 'true'
-        uses: microsoft/setup-msbuild@v2
+        uses: microsoft/setup-msbuild@v3
 
       - name: Restore vcpkg binary cache (Windows)
         if: matrix.rid == 'win-x64' && steps.native.outputs.cache-hit != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ github.workspace }}/.vcpkg-binary-cache
           key: vcpkg-${{ runner.os }}-${{ hashFiles('external/GameNetworkingSockets/vcpkg.json', 'build/triplets/**') }}
@@ -118,7 +118,7 @@ jobs:
 
       - name: Set up .NET (Unix smoke test)
         if: matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64'
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
 
@@ -140,7 +140,7 @@ jobs:
           dotnet test tests/GameNetworkingSockets.Net.Tests/GameNetworkingSockets.Net.Tests.csproj -c Release --no-build
 
       - name: Upload GameNetworkingSockets shared library
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gns-native-${{ matrix.rid }}
           path: artifacts/native/${{ matrix.rid }}/
