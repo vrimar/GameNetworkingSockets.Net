@@ -119,6 +119,25 @@ public static partial class Library
         SteamNetworkingSockets_SetCustomMemoryAllocator(malloc, free, realloc);
     }
 
+    /// <summary>
+    /// Sets the size, in bytes, requested for the kernel send and receive
+    /// buffers of every UDP socket opened after this call; the library's
+    /// default is 256 KiB. Call it before creating the listen socket or
+    /// connection it should apply to.
+    /// </summary>
+    /// <remarks>
+    /// A listen socket shares one receive buffer among all of its
+    /// connections, so a busy server can overflow the default and drop
+    /// packets, connection handshakes included. The OS may cap the request:
+    /// on Linux at <c>net.core.rmem_max</c> and <c>net.core.wmem_max</c>,
+    /// which then need raising on the host for a larger size to take effect.
+    /// </remarks>
+    public static void SetUdpSocketBufferSize(int bytes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bytes);
+        SteamNetworkingSockets_SetUDPSocketBufferSize(bytes);
+    }
+
     // -----------------------------------------------------------------
     // Native (steamnetworkingsockets.h)
     // -----------------------------------------------------------------
@@ -129,6 +148,9 @@ public static partial class Library
 
     [LibraryImport(LibraryName)]
     private static partial void GameNetworkingSockets_Kill();
+
+    [LibraryImport(LibraryName)]
+    private static partial void SteamNetworkingSockets_SetUDPSocketBufferSize(int cbBytes);
 
     // Delegate parameters are not supported by [LibraryImport] — they need
     // [UnmanagedFunctionPointer] cdecl thunks which the source generator

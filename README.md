@@ -86,6 +86,17 @@ What GameNetworkingSockets checks, and what it lets through:
 
 The package also ships Valve's `steamnetworkingsockets_certtool` under `tools/{rid}/`, whose PEM output `NetworkingSockets.SetCertificateAndPrivateKey` takes. It cannot bind a certificate to an identity, so it does not cover server authentication.
 
+## Socket buffers
+
+GameNetworkingSockets asks the kernel for 256 KiB send and receive buffers on every UDP socket. A listen socket receives every client's packets through its one buffer, so a server with a crowd of clients overflows it in a burst, and the kernel drops what does not fit, handshakes included. Clients then wait out their retries, and lost data waits out its retransmissions. Ask for more before opening the listen socket:
+
+```csharp
+Library.SetUdpSocketBufferSize(8 * 1024 * 1024);
+var listenSocket = sockets.CreateListenSocket(ref address);
+```
+
+The setting applies to sockets opened after the call. The kernel caps the request without an error, on Linux at `net.core.rmem_max` and `net.core.wmem_max`, so raise those on the host as well.
+
 ## Runtime dependencies
 
 The native libraries inside the NuGet package have these external runtime dependencies:
